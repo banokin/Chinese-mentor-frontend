@@ -50,7 +50,7 @@ export default function ChatPage() {
       setLoading(true);
 
       try {
-        const res = await fetch(`${API_BASE}/api/chat/`, {
+        const res = await fetch(`${API_BASE}/api/agent/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
