@@ -6,7 +6,14 @@ import { API_BASE, transcribeAudio } from "@/lib/api";
 
 type Role = "user" | "assistant";
 
-type Msg = { role: Role; content: string; fromVoice?: boolean };
+type Msg = { id: string; role: Role; content: string; fromVoice?: boolean };
+
+function makeMsgId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function pickRecorderMimeType(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
@@ -19,6 +26,16 @@ function pickRecorderMimeType(): string | undefined {
   return undefined;
 }
 
+function pickZhVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => voice.lang.startsWith("zh")) ??
+    voices.find((voice) => voice.lang.toLowerCase().includes("cn")) ??
+    null
+  );
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -26,7 +43,12 @@ export default function ChatPage() {
   const [error, setError] = useState<string>("");
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string>("");
+  const [translatingId, setTranslatingId] = useState<string>("");
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -34,6 +56,14 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, transcribing]);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
 
   const sendChat = useCallback(
     async (userText: string, fromVoice = false) => {
@@ -44,13 +74,13 @@ export default function ChatPage() {
       const before = messages;
       const next: Msg[] = [
         ...before,
-        { role: "user", content: text, ...(fromVoice ? { fromVoice: true } : {}) },
+        { id: makeMsgId(), role: "user", content: text, ...(fromVoice ? { fromVoice: true } : {}) },
       ];
       setMessages(next);
       setLoading(true);
 
       try {
-        const res = await fetch(`${API_BASE}/api/agent/`, {
+        const res = await fetch(`${API_BASE}/api/chat/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -77,7 +107,7 @@ export default function ChatPage() {
           setMessages(before);
           return;
         }
-        setMessages([...next, { role: "assistant", content: reply }]);
+        setMessages([...next, { id: makeMsgId(), role: "assistant", content: reply }]);
       } catch (e) {
         setError(String(e));
         setMessages(before);
@@ -153,6 +183,121 @@ export default function ChatPage() {
     }
   }, [stopRecording, sendChat]);
 
+  const stopSpeech = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setSpeakingId("");
+  }, []);
+
+  const playBrowserSpeech = useCallback(
+    (message: Msg) => {
+      const text = message.content.trim();
+      if (!text) return;
+      stopSpeech();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "zh-CN";
+      const voice = pickZhVoice();
+      if (voice) utterance.voice = voice;
+      utterance.rate = 0.95;
+      utterance.onend = () => setSpeakingId("");
+      utterance.onerror = () => {
+        setSpeakingId("");
+        setError("Не удалось озвучить сообщение");
+      };
+      setSpeakingId(message.id);
+      window.speechSynthesis?.speak(utterance);
+    },
+    [stopSpeech],
+  );
+
+  const speakMessage = useCallback(
+    async (message: Msg) => {
+      if (speakingId === message.id) {
+        stopSpeech();
+        return;
+      }
+
+      const text = message.content.trim();
+      if (!text) return;
+      setError("");
+      setSpeakingId(message.id);
+      stopSpeech();
+      setSpeakingId(message.id);
+
+      try {
+        const fd = new FormData();
+        fd.append("text", text);
+        const res = await fetch(`${API_BASE}/api/practice/example-speech`, {
+          method: "POST",
+          body: fd,
+        });
+        if (!res.ok) {
+          playBrowserSpeech(message);
+          return;
+        }
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        objectUrlRef.current = objectUrl;
+        const audio = new Audio(objectUrl);
+        audioRef.current = audio;
+        audio.onended = stopSpeech;
+        audio.onerror = () => {
+          setError("Ошибка воспроизведения озвучки");
+          stopSpeech();
+        };
+        setSpeakingId(message.id);
+        await audio.play();
+      } catch {
+        playBrowserSpeech(message);
+      }
+    },
+    [playBrowserSpeech, speakingId, stopSpeech],
+  );
+
+  const translateMessage = useCallback(async (message: Msg) => {
+    if (translations[message.id]) {
+      setTranslations((current) => {
+        const next = { ...current };
+        delete next[message.id];
+        return next;
+      });
+      return;
+    }
+
+    setError("");
+    setTranslatingId(message.id);
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message.content }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg =
+          typeof err?.detail?.message === "string"
+            ? err.detail.message
+            : "Не удалось перевести сообщение";
+        setError(msg);
+        return;
+      }
+      const data = (await res.json()) as { translation?: string };
+      setTranslations((current) => ({
+        ...current,
+        [message.id]: String(data.translation ?? "").trim(),
+      }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setTranslatingId("");
+    }
+  }, [translations]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -190,9 +335,9 @@ export default function ChatPage() {
             Сообщений пока нет — напишите ниже или запишите голос.
           </p>
         ) : null}
-        {messages.map((m, i) => (
+        {messages.map((m) => (
           <div
-            key={i}
+            key={m.id}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
@@ -209,6 +354,34 @@ export default function ChatPage() {
                 </span>
               ) : null}
               {m.content}
+              {m.role === "assistant" ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-white px-2 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => void speakMessage(m)}
+                  >
+                    {speakingId === m.id ? "Стоп" : "Слушать"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={translatingId === m.id}
+                    className="rounded-lg bg-white px-2 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50"
+                    onClick={() => void translateMessage(m)}
+                  >
+                    {translatingId === m.id
+                      ? "Переводим..."
+                      : translations[m.id]
+                        ? "Скрыть перевод"
+                        : "Перевести"}
+                  </button>
+                </div>
+              ) : null}
+              {m.role === "assistant" && translations[m.id] ? (
+                <p className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-sm text-slate-700 ring-1 ring-slate-200">
+                  {translations[m.id]}
+                </p>
+              ) : null}
             </div>
           </div>
         ))}
