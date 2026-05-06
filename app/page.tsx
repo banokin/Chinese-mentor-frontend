@@ -35,6 +35,12 @@ export default function HomePage() {
         >
           ReAct-агент (/agent)
         </Link>
+        <Link
+          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center font-medium text-amber-950 hover:bg-amber-100"
+          href="/rag-upload"
+        >
+          Загрузка документов в Qdrant (/rag-upload)
+        </Link>
       </nav>
     </main>
   );

@@ -34,3 +34,40 @@ export async function transcribeAudio(
   }
   return res.json() as Promise<{ recognized_text: string }>;
 }
+
+/** Ответ POST /api/agent/rag/upload после индексации файла в Qdrant. */
+export type RagUploadResponse = {
+  filename: string;
+  collection: string;
+  documents: number;
+  chunks: number;
+  vector_size: number;
+  points_count: number;
+};
+
+async function readBackendError(res: Response): Promise<string> {
+  const err = await res.json().catch(() => ({})) as {
+    detail?: unknown;
+  };
+  const detail = err?.detail;
+  if (detail && typeof detail === "object" && detail !== null) {
+    const msg = (detail as { message?: unknown }).message;
+    if (typeof msg === "string") return msg;
+  }
+  if (typeof detail === "string") return detail;
+  return JSON.stringify(err);
+}
+
+/** Загружает PDF / TXT / MD в коллекцию Qdrant (эмбеддинги на бэкенде). */
+export async function uploadRagDocument(file: File): Promise<RagUploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/api/agent/rag/upload`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    throw new Error(await readBackendError(res));
+  }
+  return res.json() as Promise<RagUploadResponse>;
+}

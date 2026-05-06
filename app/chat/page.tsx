@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE, transcribeAudio } from "@/lib/api";
 
+const PRACTICE_CHAT_STORAGE_KEY = "chinese-mentor-practice-chat-v1";
+
 type Role = "user" | "assistant";
 
 type Msg = { id: string; role: Role; content: string; fromVoice?: boolean };
@@ -38,6 +40,7 @@ function pickZhVoice(): SpeechSynthesisVoice | null {
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [chatHydrated, setChatHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -56,6 +59,79 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, transcribing]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setChatHydrated(true);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(PRACTICE_CHAT_STORAGE_KEY);
+      if (!raw) {
+        setChatHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        messages?: unknown;
+        translations?: unknown;
+      };
+      const rawMsgs = parsed.messages;
+      if (Array.isArray(rawMsgs)) {
+        const rows: Msg[] = [];
+        for (const x of rawMsgs) {
+          if (
+            x &&
+            typeof x === "object" &&
+            typeof (x as Msg).id === "string" &&
+            ((x as Msg).role === "user" || (x as Msg).role === "assistant") &&
+            typeof (x as Msg).content === "string"
+          ) {
+            rows.push({
+              id: (x as Msg).id,
+              role: (x as Msg).role,
+              content: (x as Msg).content,
+              ...("fromVoice" in x && (x as Msg).fromVoice ? { fromVoice: true } : {}),
+            });
+          }
+        }
+        if (rows.length) setMessages(rows);
+      }
+      if (parsed.translations && typeof parsed.translations === "object") {
+        const t = parsed.translations as Record<string, string>;
+        const clean: Record<string, string> = {};
+        for (const [k, v] of Object.entries(t)) {
+          if (typeof v === "string" && v.trim()) clean[k] = v;
+        }
+        if (Object.keys(clean).length) setTranslations(clean);
+      }
+    } catch {
+      /* ignore */
+    }
+    setChatHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!chatHydrated || typeof window === "undefined") return;
+    try {
+      sessionStorage.setItem(
+        PRACTICE_CHAT_STORAGE_KEY,
+        JSON.stringify({ messages, translations }),
+      );
+    } catch {
+      /* quota */
+    }
+  }, [messages, translations, chatHydrated]);
+
+  const clearChat = useCallback(() => {
+    setMessages([]);
+    setTranslations({});
+    setError("");
+    try {
+      sessionStorage.removeItem(PRACTICE_CHAT_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -317,7 +393,13 @@ export default function ChatPage() {
           ← На главную
         </Link>
         <h1 className="text-lg font-semibold text-slate-800">Чат с собеседником</h1>
-        <span className="w-16" aria-hidden />
+        <button
+          type="button"
+          className="text-xs text-slate-500 underline decoration-slate-300 hover:text-slate-800"
+          onClick={() => clearChat()}
+        >
+          Очистить чат
+        </button>
       </div>
       <p className="text-center text-sm text-slate-600">
         Пишите или отправьте{" "}

@@ -4,27 +4,20 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE, transcribeAudio } from "@/lib/api";
 
+const AGENT_CHAT_STORAGE_KEY = "chinese-mentor-agent-chat-v1";
+
 type Role = "user" | "assistant";
 
 type Msg = { role: Role; content: string };
-type RagUploadResult = {
-  filename: string;
-  collection: string;
-  documents: number;
-  chunks: number;
-  points_count: number;
-};
 
 export default function AgentPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [chatHydrated, setChatHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string>("");
-  const [ragFile, setRagFile] = useState<File | null>(null);
-  const [ragUploading, setRagUploading] = useState(false);
-  const [ragUploadResult, setRagUploadResult] = useState<RagUploadResult | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -33,6 +26,57 @@ export default function AgentPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setChatHydrated(true);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(AGENT_CHAT_STORAGE_KEY);
+      if (!raw) {
+        setChatHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        setChatHydrated(true);
+        return;
+      }
+      const rows = parsed.filter(
+        (x): x is Msg =>
+          Boolean(x) &&
+          typeof x === "object" &&
+          (x as Msg).role !== undefined &&
+          (x as Msg).content !== undefined &&
+          ((x as Msg).role === "user" || (x as Msg).role === "assistant") &&
+          typeof (x as Msg).content === "string",
+      );
+      if (rows.length) setMessages(rows);
+    } catch {
+      /* ignore */
+    }
+    setChatHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!chatHydrated || typeof window === "undefined") return;
+    try {
+      sessionStorage.setItem(AGENT_CHAT_STORAGE_KEY, JSON.stringify(messages));
+    } catch {
+      /* квота sessionStorage */
+    }
+  }, [messages, chatHydrated]);
+
+  const clearChat = useCallback(() => {
+    setMessages([]);
+    setError("");
+    try {
+      sessionStorage.removeItem(AGENT_CHAT_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const sendText = useCallback(async (text: string, opts?: { clearInput?: boolean }) => {
     const normalized = text.trim();
@@ -82,38 +126,6 @@ export default function AgentPage() {
   const send = useCallback(async () => {
     await sendText(input, { clearInput: true });
   }, [input, sendText]);
-
-  const uploadRagFile = useCallback(async () => {
-    if (!ragFile || ragUploading) return;
-
-    setError("");
-    setRagUploadResult(null);
-    setRagUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", ragFile);
-      const res = await fetch(`${API_BASE}/api/agent/rag/upload`, {
-        method: "POST",
-        body: fd,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg =
-          typeof err?.detail?.message === "string"
-            ? err.detail.message
-            : JSON.stringify(err);
-        setError(msg);
-        return;
-      }
-      const data = (await res.json()) as RagUploadResult;
-      setRagUploadResult(data);
-      setRagFile(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRagUploading(false);
-    }
-  }, [ragFile, ragUploading]);
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -194,7 +206,13 @@ export default function AgentPage() {
           ← На главную
         </Link>
         <h1 className="text-lg font-semibold text-slate-800">LangChain-агент</h1>
-        <span className="w-16" aria-hidden />
+        <button
+          type="button"
+          className="text-xs text-slate-500 underline decoration-slate-300 hover:text-slate-800"
+          onClick={() => clearChat()}
+        >
+          Очистить чат
+        </button>
       </div>
       <p className="text-center text-sm text-slate-600">
         RAG-агент с поддержкой голосовых сообщений через OpenAI Whisper. Нужен{" "}
@@ -205,45 +223,14 @@ export default function AgentPage() {
         Попробуйте: «Как читается 你好?» или обычный разговор по-китайски.
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Загрузить файл в RAG</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Поддерживаются PDF, TXT и MD. Файл будет разбит на чанки и добавлен в Qdrant.
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              type="file"
-              accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-              disabled={ragUploading}
-              className="block flex-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-violet-800 hover:file:bg-violet-100 disabled:opacity-50"
-              onChange={(e) => {
-                setRagUploadResult(null);
-                setRagFile(e.target.files?.[0] ?? null);
-              }}
-            />
-            <button
-              type="button"
-              disabled={!ragFile || ragUploading}
-              className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-40"
-              onClick={() => void uploadRagFile()}
-            >
-              {ragUploading ? "Загружаем..." : "Загрузить в RAG"}
-            </button>
-          </div>
-          {ragFile ? (
-            <p className="text-xs text-slate-500">Выбран файл: {ragFile.name}</p>
-          ) : null}
-          {ragUploadResult ? (
-            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-              Загружено: {ragUploadResult.filename}. Чанков: {ragUploadResult.chunks}.
-              Коллекция: {ragUploadResult.collection}. Всего векторов: {ragUploadResult.points_count}.
-            </p>
-          ) : null}
-        </div>
-      </section>
+      <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-center">
+        <Link
+          className="text-sm font-medium text-amber-950 underline decoration-amber-300 underline-offset-2 hover:text-amber-800"
+          href="/rag-upload"
+        >
+          Загрузить документы в Qdrant для RAG
+        </Link>
+      </div>
 
       <div className="flex min-h-[360px] flex-1 flex-col gap-3 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         {messages.length === 0 && !loading ? (
