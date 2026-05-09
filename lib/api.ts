@@ -11,13 +11,20 @@ export function wsPronunciationUrl(): string {
   return u.toString();
 }
 
+/** Язык речи для Whisper/HF (совпадает с кодами чатов агента). */
+export type AsrChatLanguage = "zh" | "fr" | "es" | "en";
+
 /** ASR через тот же бэкенд, что и практика (Whisper / HF). */
 export async function transcribeAudio(
   blob: Blob,
   filename = "voice.webm",
+  options?: { language?: AsrChatLanguage },
 ): Promise<{ recognized_text: string }> {
   const fd = new FormData();
   fd.append("audio", blob, filename);
+  if (options?.language) {
+    fd.append("language", options.language);
+  }
   const res = await fetch(`${API_BASE}/api/practice/transcribe`, {
     method: "POST",
     body: fd,

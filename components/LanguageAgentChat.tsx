@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE, transcribeAudio } from "@/lib/api";
-import type { PracticeChatConfig } from "@/lib/practice-chat";
+import { type PracticeChatConfig, voiceRecognitionHintRu } from "@/lib/practice-chat";
 
 type Role = "user" | "assistant";
 
@@ -291,7 +291,9 @@ export function LanguageAgentChat({ config }: Props) {
     setTranscribing(true);
     setError("");
     try {
-      const { recognized_text } = await transcribeAudio(blob, "voice.webm");
+      const { recognized_text } = await transcribeAudio(blob, "voice.webm", {
+        language: config.lang,
+      });
       const t = recognized_text.trim();
       if (!t) {
         setError("Не удалось распознать речь — попробуйте ещё раз.");
@@ -479,6 +481,7 @@ export function LanguageAgentChat({ config }: Props) {
       </nav>
 
       <p className="text-center text-sm text-slate-600">{config.subtitle}</p>
+      <p className="text-center text-xs text-slate-500">{voiceRecognitionHintRu(config.lang)}</p>
 
       <div
         className={`rounded-xl border border-dashed px-4 py-3 text-center text-sm leading-relaxed ${accent.banner}`}

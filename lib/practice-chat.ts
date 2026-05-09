@@ -74,6 +74,17 @@ export const PRACTICE_CHAT_CONFIG_EN: PracticeChatConfig = {
   accent: "indigo",
 };
 
+/** Подпись: на каком языке ожидается речь при голосовом вводе (совпадает с ASR). */
+export function voiceRecognitionHintRu(lang: PracticeLang): string {
+  const hints: Record<PracticeLang, string> = {
+    zh: "Голосовое сообщение распознаётся как китайская речь (Whisper / HF).",
+    fr: "Голосовое сообщение распознаётся как французская речь.",
+    es: "Голосовое сообщение распознаётся как испанская речь.",
+    en: "Голосовое сообщение распознаётся как английская речь.",
+  };
+  return hints[lang];
+}
+
 /** Ссылки на страницы чата с агентом (главная, навбар). */
 export const CHAT_AGENT_LINKS: { href: string; label: string }[] = [
   { href: "/chat", label: "中文 (китайский)" },

@@ -167,7 +167,9 @@ export default function AgentPage() {
 
         setIsTranscribing(true);
         try {
-          const { recognized_text } = await transcribeAudio(blob, "voice.webm");
+          const { recognized_text } = await transcribeAudio(blob, "voice.webm", {
+            language: "zh",
+          });
           const transcript = recognized_text.trim();
           if (!transcript) {
             setError("Whisper не распознал речь");
