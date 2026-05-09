@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CHAT_AGENT_LINKS } from "@/lib/practice-chat";
 
 export default function HomePage() {
   return (
@@ -23,12 +24,20 @@ export default function HomePage() {
         >
           Realtime (/realtime)
         </Link>
-        <Link
-          className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-center font-medium text-sky-900 hover:bg-sky-100"
-          href="/chat"
-        >
-          Чат с собеседником (/chat)
-        </Link>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Чаты с RAG-агентом
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CHAT_AGENT_LINKS.map(({ href, label }) => (
+            <Link
+              key={href}
+              className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-center text-sm font-medium text-sky-900 hover:bg-sky-100"
+              href={href}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
         <Link
           className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-center font-medium text-violet-900 hover:bg-violet-100"
           href="/agent"
